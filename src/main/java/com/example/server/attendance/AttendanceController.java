@@ -39,13 +39,11 @@ public class AttendanceController {
         this.recordRepo = recordRepo;
     }
 
-    // --------- DTO'lar ----------
     public record StartRequest(Integer minutes) {}
     public record CheckinRequest(String secret) {}
     public record CheckinResponse(Long sessionId, Instant checkedAt, String status) {}
     public record ActiveSummaryDto(Long sessionId, Instant expiresAt, long count, boolean active) {}
 
-    // --------- Yardımcılar ----------
     private Long principalUserName(UserDetails principal) {
         try {
             return Long.parseLong(principal.getUsername());
@@ -69,7 +67,6 @@ public class AttendanceController {
         return c;
     }
 
-    // --------- Özet ----------
     @GetMapping("/active/summary")
     public ActiveSummaryDto activeSummary(@PathVariable Long courseId,
                                           @AuthenticationPrincipal UserDetails principal) {
@@ -90,7 +87,6 @@ public class AttendanceController {
         return new ActiveSummaryDto(s.getId(), s.getExpiresAt(), cnt, s.isActive());
     }
 
-    // --------- Oturum Başlat ----------
     @PostMapping("/start")
     public AttendanceSessionDto start(@PathVariable Long courseId,
                                       @RequestBody(required = false) StartRequest req,
@@ -137,7 +133,6 @@ public class AttendanceController {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Aktif oturum yok"));
     }
 
-    // --------- Oturumu Bitir (SADECE SAHİBİ) ----------
     @PostMapping("/stop")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void stop(@PathVariable Long courseId,
@@ -160,46 +155,36 @@ public class AttendanceController {
         sessionRepo.save(active);
     }
 
-    // --------- Check-in (ÖĞRENCİ) ----------
     @PostMapping("/checkin")
     public CheckinResponse checkin(@PathVariable Long courseId,
                                    @RequestBody CheckinRequest req,
                                    @AuthenticationPrincipal UserDetails principal) {
-        // 1) secret kontrol + TRIM
         if (req == null || req.secret() == null || req.secret().isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "secret is required");
         }
         final String secret = req.secret().trim();
 
-        // 2) öğrenci
         User student = currentUser(principal);
 
-        // 3) aktif oturum (secret ile)
         AttendanceSession session = sessionRepo.findBySecretAndIsActiveTrue(secret)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Session not found or inactive"));
 
-        // 4) courseId eşleşmesi
         if (!session.getCourse().getId().equals(courseId)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Course mismatch");
         }
 
-        // 5) süre kontrol
         if (session.getExpiresAt() != null && Instant.now().isAfter(session.getExpiresAt())) {
             throw new ResponseStatusException(HttpStatus.GONE, "Session expired");
         }
 
-        // 6) sahibi kendi dersi için check-in yapamaz
         if (session.getOwner().getId().equals(student.getId())) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Owner cannot check-in");
         }
 
-        // 7) tekrar check-in engelle
         if (recordRepo.existsBySessionIdAndStudent_Id(session.getId(), student.getId())) {
-            // İstersen 204 dönebilirsin; şu an 409 davranışını koruyorum:
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Already checked-in");
         }
 
-        // 8) kaydet
         AttendanceRecord rec = new AttendanceRecord();
         rec.setSessionId(session.getId());
         rec.setStudent(student);
@@ -209,7 +194,6 @@ public class AttendanceController {
         return new CheckinResponse(session.getId(), rec.getCheckedAt(), "ok");
     }
 
-    // --------- Secret üretimi ----------
     private static final String ALPHANUM = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
     private static final SecureRandom RAND = new SecureRandom();
 
@@ -241,5 +225,45 @@ public class AttendanceController {
 
         var records = recordRepo.findAllBySessionIdOrderByCheckedAtAsc(active.getId());
         return records.stream().map(AttendanceRecordDto::from).toList();
+    }
+    public record SessionWithCountDto(
+            Long id,
+            Instant createdAt,
+            Instant expiresAt,
+            boolean active,
+            long count
+    ) {
+        public static SessionWithCountDto of(AttendanceSession s, long count) {
+            return new SessionWithCountDto(
+                    s.getId(),
+                    s.getCreatedAt(),
+                    s.getExpiresAt(),
+                    s.isActive(),
+                    count
+            );
+        }
+    }
+    @GetMapping("/history")
+    public java.util.List<SessionWithCountDto> history(@PathVariable Long courseId,
+                                                       @AuthenticationPrincipal org.springframework.security.core.userdetails.UserDetails principal) {
+        Long userName;
+        try {
+            userName = Long.parseLong(principal.getUsername());
+        } catch (NumberFormatException e) {
+            throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST, "Invalid principal");
+        }
+        var owner = userRepo.findByUserName(userName)
+                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.UNAUTHORIZED, "User not found"));
+
+        var course = courseRepo.findById(courseId)
+                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.NOT_FOUND, "Course not found"));
+        if (!course.getOwner().getId().equals(owner.getId())) {
+            throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN, "Only owner can view history");
+        }
+
+        var sessions = sessionRepo.findAllByCourse_IdOrderByCreatedAtDesc(courseId);
+        return sessions.stream()
+                .map(s -> SessionWithCountDto.of(s, recordRepo.countBySessionId(s.getId())))
+                .toList();
     }
 }
