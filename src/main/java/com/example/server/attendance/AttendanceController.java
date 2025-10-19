@@ -43,6 +43,7 @@ public class AttendanceController {
     public record StartRequest(Integer minutes) {}
     public record CheckinRequest(String secret) {}
     public record CheckinResponse(Long sessionId, Instant checkedAt, String status) {}
+    public record ActiveSummaryDto(Long sessionId, Instant expiresAt, long count, boolean active) {}
 
     // --------- Yardımcılar ----------
     private Long principalUserName(UserDetails principal) {
@@ -68,6 +69,27 @@ public class AttendanceController {
         return c;
     }
 
+    // --------- Özet ----------
+    @GetMapping("/active/summary")
+    public ActiveSummaryDto activeSummary(@PathVariable Long courseId,
+                                          @AuthenticationPrincipal UserDetails principal) {
+        Long userName = principalUserName(principal);
+        User owner = userRepo.findByUserName(userName)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found"));
+
+        Course course = courseRepo.findById(courseId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Course not found"));
+        if (!course.getOwner().getId().equals(owner.getId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only owner can view");
+        }
+
+        AttendanceSession s = sessionRepo.findFirstByCourse_IdAndIsActiveTrue(courseId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No active session"));
+
+        long cnt = recordRepo.countBySessionId(s.getId());
+        return new ActiveSummaryDto(s.getId(), s.getExpiresAt(), cnt, s.isActive());
+    }
+
     // --------- Oturum Başlat ----------
     @PostMapping("/start")
     public AttendanceSessionDto start(@PathVariable Long courseId,
@@ -76,7 +98,6 @@ public class AttendanceController {
         User owner = currentUser(principal);
         Course course = ownedCourseOr403(courseId, owner);
 
-        // aktif varsa kapat
         sessionRepo.findFirstByCourse_IdAndIsActiveTrue(courseId).ifPresent(s -> {
             s.setActive(false);
             sessionRepo.save(s);
@@ -99,12 +120,7 @@ public class AttendanceController {
     @GetMapping("/active")
     public AttendanceSessionDto active(@PathVariable Long courseId,
                                        @AuthenticationPrincipal UserDetails principal) {
-        Long userName;
-        try {
-            userName = Long.parseLong(principal.getUsername());
-        } catch (NumberFormatException e) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid principal");
-        }
+        Long userName = principalUserName(principal);
 
         Course course = courseRepo.findById(courseId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Ders bulunamadı"));
@@ -126,18 +142,10 @@ public class AttendanceController {
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void stop(@PathVariable Long courseId,
                      @AuthenticationPrincipal UserDetails principal) {
-        // 1) Kullanıcıyı bul
-        Long userName;
-        try {
-            userName = Long.parseLong(principal.getUsername());
-        } catch (NumberFormatException e) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid principal");
-        }
-
+        Long userName = principalUserName(principal);
         User owner = userRepo.findByUserName(userName)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found"));
 
-        // 2) Kursu ve aktif oturumu bul
         Course course = courseRepo.findById(courseId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Course not found"));
 
@@ -145,52 +153,53 @@ public class AttendanceController {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only owner can stop attendance");
         }
 
-        var activeOpt = sessionRepo.findFirstByCourse_IdAndIsActiveTrue(courseId);
-        var active = activeOpt.orElseThrow(() ->
-                new ResponseStatusException(HttpStatus.NOT_FOUND, "No active session"));
+        var active = sessionRepo.findFirstByCourse_IdAndIsActiveTrue(courseId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No active session"));
 
-        // 3) Bitir
         active.setActive(false);
         sessionRepo.save(active);
     }
 
     // --------- Check-in (ÖĞRENCİ) ----------
-    // Not: Bu uç, URL'de courseId bekler. QR içinde courseId ve secret'ı göndereceğiz.
     @PostMapping("/checkin")
     public CheckinResponse checkin(@PathVariable Long courseId,
                                    @RequestBody CheckinRequest req,
                                    @AuthenticationPrincipal UserDetails principal) {
+        // 1) secret kontrol + TRIM
         if (req == null || req.secret() == null || req.secret().isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "secret is required");
         }
+        final String secret = req.secret().trim();
 
+        // 2) öğrenci
         User student = currentUser(principal);
 
-        // Aktif oturumu secret ile bul
-        AttendanceSession session = sessionRepo.findBySecretAndIsActiveTrue(req.secret())
+        // 3) aktif oturum (secret ile)
+        AttendanceSession session = sessionRepo.findBySecretAndIsActiveTrue(secret)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Session not found or inactive"));
 
-        // courseId uyuşsun
+        // 4) courseId eşleşmesi
         if (!session.getCourse().getId().equals(courseId)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Course mismatch");
         }
 
-        // Süresi geçmiş mi?
+        // 5) süre kontrol
         if (session.getExpiresAt() != null && Instant.now().isAfter(session.getExpiresAt())) {
             throw new ResponseStatusException(HttpStatus.GONE, "Session expired");
         }
 
-        // Sahibi kendisi olamaz
+        // 6) sahibi kendi dersi için check-in yapamaz
         if (session.getOwner().getId().equals(student.getId())) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Owner cannot check-in");
         }
 
-        // Çift kayıt engelle
+        // 7) tekrar check-in engelle
         if (recordRepo.existsBySessionIdAndStudent_Id(session.getId(), student.getId())) {
+            // İstersen 204 dönebilirsin; şu an 409 davranışını koruyorum:
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Already checked-in");
         }
 
-        // Kaydet
+        // 8) kaydet
         AttendanceRecord rec = new AttendanceRecord();
         rec.setSessionId(session.getId());
         rec.setStudent(student);
@@ -210,5 +219,27 @@ public class AttendanceController {
             sb.append(ALPHANUM.charAt(RAND.nextInt(ALPHANUM.length())));
         }
         return sb.toString();
+    }
+
+    @GetMapping("/active/records")
+    public java.util.List<AttendanceRecordDto> activeRecords(
+            @PathVariable Long courseId,
+            @AuthenticationPrincipal UserDetails principal
+    ) {
+        Long userName = principalUserName(principal);
+        var owner = userRepo.findByUserName(userName)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found"));
+
+        var course = courseRepo.findById(courseId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Course not found"));
+        if (!course.getOwner().getId().equals(owner.getId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only owner can view attendees");
+        }
+
+        var active = sessionRepo.findFirstByCourse_IdAndIsActiveTrue(courseId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No active session"));
+
+        var records = recordRepo.findAllBySessionIdOrderByCheckedAtAsc(active.getId());
+        return records.stream().map(AttendanceRecordDto::from).toList();
     }
 }

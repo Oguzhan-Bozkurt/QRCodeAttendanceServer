@@ -13,4 +13,7 @@ public interface AttendanceRecordRepository extends JpaRepository<AttendanceReco
     long countBySessionId(Long sessionId);
 
     List<AttendanceRecord> findAllBySessionId(Long sessionId);
+
+    List<AttendanceRecord> findAllBySessionIdOrderByCheckedAtAsc(Long sessionId);
+
 }
