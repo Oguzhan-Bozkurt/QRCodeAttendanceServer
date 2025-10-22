@@ -266,4 +266,58 @@ public class AttendanceController {
                 .map(s -> SessionWithCountDto.of(s, recordRepo.countBySessionId(s.getId())))
                 .toList();
     }
+
+    @GetMapping("/{sessionId}")
+    public AttendanceSessionDto sessionDetail(@PathVariable Long courseId,
+                                              @PathVariable Long sessionId,
+                                              @AuthenticationPrincipal UserDetails principal) {
+        Long userName;
+        try { userName = Long.parseLong(principal.getUsername()); }
+        catch (NumberFormatException e) { throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid principal"); }
+
+        User owner = userRepo.findByUserName(userName)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found"));
+
+        Course course = courseRepo.findById(courseId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Course not found"));
+        if (!course.getOwner().getId().equals(owner.getId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only owner can view");
+        }
+
+        AttendanceSession s = sessionRepo.findById(sessionId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Session not found"));
+
+        if (!s.getCourse().getId().equals(courseId)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Course mismatch");
+        }
+
+        return AttendanceSessionDto.from(s);
+    }
+
+    @GetMapping("/{sessionId}/records")
+    public java.util.List<AttendanceRecordDto> sessionRecords(@PathVariable Long courseId,
+                                                              @PathVariable Long sessionId,
+                                                              @AuthenticationPrincipal org.springframework.security.core.userdetails.UserDetails principal) {
+        Long userName;
+        try { userName = Long.parseLong(principal.getUsername()); }
+        catch (NumberFormatException e) { throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid principal"); }
+
+        User owner = userRepo.findByUserName(userName)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found"));
+
+        Course course = courseRepo.findById(courseId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Course not found"));
+        if (!course.getOwner().getId().equals(owner.getId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only owner can view");
+        }
+
+        AttendanceSession s = sessionRepo.findById(sessionId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Session not found"));
+        if (!s.getCourse().getId().equals(courseId)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Course mismatch");
+        }
+
+        var records = recordRepo.findAllBySessionIdOrderByCheckedAtAsc(sessionId);
+        return records.stream().map(AttendanceRecordDto::from).toList();
+    }
 }
