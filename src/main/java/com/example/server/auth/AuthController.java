@@ -10,8 +10,9 @@ import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
-import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -25,16 +26,20 @@ public class AuthController {
     private final AuthenticationManager authManager;
     private final UserRepository repo;
     private final JwtService jwtService;
+    private final PasswordEncoder passwordEncoder;
 
     public AuthController(AuthenticationManager authManager,
                           JwtService jwtService,
-                          UserRepository repo) {
+                          UserRepository repo,
+                          PasswordEncoder passwordEncoder) {
         this.authManager = authManager;
         this.jwtService = jwtService;
         this.repo = repo;
+        this.passwordEncoder = passwordEncoder;
     }
 
     public record LoginRequest(Long userName, String password) {}
+    public record RegisterRequest(Long userName, String password, String name, String surname, Boolean isStudent, String title) {}
 
     @GetMapping("/me")
     public UserDto me(@AuthenticationPrincipal UserDetails user) {
@@ -42,11 +47,11 @@ public class AuthController {
         try {
             userName = Long.parseLong(user.getUsername());
         } catch (NumberFormatException ex) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid principal");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Geçersiz kimlik");
         }
 
         User u = repo.findByUserName(userName)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Kullanıcı bulunamadı"));
 
         return UserDto.from(u);
     }
@@ -60,9 +65,7 @@ public class AuthController {
             Authentication auth = authManager.authenticate(token);
             var principal = (UserDetails) auth.getPrincipal();
 
-            // JWT üret
             String accessToken = jwtService.generateToken(principal);
-
             return ResponseEntity.ok(Map.of(
                     "status", "ok",
                     "user", principal.getUsername(),
@@ -75,5 +78,29 @@ public class AuthController {
                     "message", "Geçersiz kullanıcı adı veya şifre"
             ));
         }
+    }
+
+    @PostMapping("/register")
+    public UserDto register(@RequestBody RegisterRequest req) {
+        if (req.userName() == null || req.password() == null || req.password().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Kullanıcı adı ve şifre gerekli");
+        }
+
+        boolean exists = repo.findByUserName(req.userName()).isPresent();
+        if (exists) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Bu kullanıcı zaten mevcut");
+        }
+
+        User u = new User();
+        u.setUserName(req.userName());
+        u.setName(req.name() != null ? req.name().trim() : null);
+        u.setSurname(req.surname() != null ? req.surname().trim() : null);
+        u.setPassword(passwordEncoder.encode(req.password()));
+        boolean isStudent = req.isStudent() != null ? req.isStudent() : true;
+        u.setUserIsStudent(isStudent);
+        u.setTitle(req.title() != null ? req.title().trim() : null);
+
+        User saved = repo.save(u);
+        return UserDto.from(saved);
     }
 }
