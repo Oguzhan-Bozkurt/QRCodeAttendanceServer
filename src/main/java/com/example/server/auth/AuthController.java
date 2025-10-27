@@ -39,7 +39,7 @@ public class AuthController {
     }
 
     public record LoginRequest(Long userName, String password) {}
-    public record RegisterRequest(Long userName, String password, String name, String surname, Boolean isStudent, String title) {}
+    public record RegisterRequest(Long userName, String password, String name, String surName, boolean userIsStudent, String title) {}
 
     @GetMapping("/me")
     public UserDto me(@AuthenticationPrincipal UserDetails user) {
@@ -94,10 +94,10 @@ public class AuthController {
         User u = new User();
         u.setUserName(req.userName());
         u.setName(req.name() != null ? req.name().trim() : null);
-        u.setSurname(req.surname() != null ? req.surname().trim() : null);
+        u.setSurname(req.surName() != null ? req.surName().trim() : null);
         u.setPassword(passwordEncoder.encode(req.password()));
-        boolean isStudent = req.isStudent() != null ? req.isStudent() : true;
-        u.setUserIsStudent(isStudent);
+        boolean userIsStudent = req.userIsStudent();
+        u.setUserIsStudent(userIsStudent);
         u.setTitle(req.title() != null ? req.title().trim() : null);
 
         User saved = repo.save(u);

@@ -320,4 +320,51 @@ public class AttendanceController {
         var records = recordRepo.findAllBySessionIdOrderByCheckedAtAsc(sessionId);
         return records.stream().map(AttendanceRecordDto::from).toList();
     }
+
+    public record MyAttendanceRow(
+            Long sessionId,
+            Instant createdAt,
+            Instant expiresAt,
+            boolean present,
+            Instant checkedAt
+    ) {}
+
+    @GetMapping("/mine")
+    public java.util.List<MyAttendanceRow> myAttendanceForCourse(
+            @PathVariable Long courseId,
+            @AuthenticationPrincipal org.springframework.security.core.userdetails.UserDetails principal
+    ) {
+        Long userName;
+        try {
+            userName = Long.parseLong(principal.getUsername());
+        } catch (NumberFormatException e) {
+            throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST, "Invalid principal");
+        }
+        User me = userRepo.findByUserName(userName)
+                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.UNAUTHORIZED, "User not found"));
+
+        Course course = courseRepo.findById(courseId)
+                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.NOT_FOUND, "Course not found"));
+
+        var sessions = sessionRepo.findAllByCourse_IdOrderByCreatedAtDesc(course.getId());
+        var sessionIds = sessions.stream().map(AttendanceSession::getId).toList();
+        var myRecords = recordRepo.findAllBySessionIdInAndStudent_Id(sessionIds, me.getId());
+        var bySessionId = new java.util.HashMap<Long, AttendanceRecord>();
+        for (var r : myRecords) bySessionId.put(r.getSessionId(), r);
+
+        return sessions.stream()
+                .map(s -> {
+                    var rec = bySessionId.get(s.getId());
+                    boolean present = rec != null;
+                    Instant checkedAt = present ? rec.getCheckedAt() : null;
+                    return new MyAttendanceRow(
+                            s.getId(),
+                            s.getCreatedAt(),
+                            s.getExpiresAt(),
+                            present,
+                            checkedAt
+                    );
+                })
+                .toList();
+    }
 }
