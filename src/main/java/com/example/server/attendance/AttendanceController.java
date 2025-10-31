@@ -1,6 +1,7 @@
 package com.example.server.attendance;
 
 import com.example.server.course.Course;
+import com.example.server.course.CourseEnrollmentRepository;
 import com.example.server.course.CourseRepository;
 import com.example.server.user.User;
 import com.example.server.user.UserRepository;
@@ -28,15 +29,19 @@ public class AttendanceController {
     private final UserRepository userRepo;
     private final AttendanceSessionRepository sessionRepo;
     private final AttendanceRecordRepository recordRepo;
+    private final CourseEnrollmentRepository enrollmentRepo;
 
     public AttendanceController(CourseRepository courseRepo,
                                 UserRepository userRepo,
                                 AttendanceSessionRepository sessionRepo,
-                                AttendanceRecordRepository recordRepo) {
+                                AttendanceRecordRepository recordRepo,
+                                CourseEnrollmentRepository enrollmentRepo) {
         this.courseRepo = courseRepo;
         this.userRepo = userRepo;
         this.sessionRepo = sessionRepo;
         this.recordRepo = recordRepo;
+        this.enrollmentRepo = enrollmentRepo;
+
     }
 
     public record StartRequest(Integer minutes) {}
@@ -171,6 +176,10 @@ public class AttendanceController {
 
         if (!session.getCourse().getId().equals(courseId)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Course mismatch");
+        }
+
+        if (!enrollmentRepo.existsByCourse_IdAndStudent_Id(session.getCourse().getId(), student.getId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "This student is not enrolled in this course");
         }
 
         if (session.getExpiresAt() != null && Instant.now().isAfter(session.getExpiresAt())) {
