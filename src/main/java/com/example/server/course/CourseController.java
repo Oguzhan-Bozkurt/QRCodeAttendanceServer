@@ -9,7 +9,9 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 @RestController
 @RequestMapping("/courses")
@@ -17,122 +19,59 @@ public class CourseController {
 
     private final CourseRepository repo;
     private final UserRepository userRepo;
-    private final CourseEnrollmentRepository enrollmentRepo;
 
-
-    public CourseController(CourseRepository repo, UserRepository userRepo, CourseEnrollmentRepository enrollmentRepo) {
+    public CourseController(CourseRepository repo, UserRepository userRepo) {
         this.repo = repo;
         this.userRepo = userRepo;
-        this.enrollmentRepo = enrollmentRepo;
     }
 
-    @GetMapping({ "", "/my" })
+    @GetMapping
     public List<CourseDto> myCourses(@AuthenticationPrincipal UserDetails principal) {
-        Long userName;
-        try {
-            userName = Long.parseLong(principal.getUsername());
-        } catch (NumberFormatException e) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid principal");
-        }
-
+        Long userName = parsePrincipal(principal);
         return repo.findAllByOwner_UserName(userName)
-                .stream()
-                .map(CourseDto::from)
-                .toList();
+                .stream().map(CourseDto::from).toList();
     }
 
     @PostMapping
     public CourseDto create(@RequestBody @Valid CourseCreateRequest req,
                             @AuthenticationPrincipal UserDetails principal) {
-        Long userName;
-        try {
-            userName = Long.parseLong(principal.getUsername());
-        } catch (NumberFormatException e) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid principal");
-        }
+        Long userName = parsePrincipal(principal);
 
         User owner = userRepo.findByUserName(userName)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found"));
+
+        if (req.studentIds() == null || req.studentIds().isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "En az bir öğrenci seçmelisiniz");
+        }
+
+        List<User> fetched = userRepo.findAllById(req.studentIds());
+        if (fetched.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Geçersiz öğrenci listesi");
+        }
 
         Course c = new Course();
         c.setCourseName(req.courseName());
         c.setCourseCode(req.courseCode());
         c.setOwner(owner);
 
+        Set<User> students = new HashSet<>(fetched);
+        c.setStudents(students);
+
         return CourseDto.from(repo.save(c));
     }
 
-    @GetMapping("/{courseId}/students")
-    public List<com.example.server.course.EnrollmentDto.CourseStudentDto> listStudents(
-            @PathVariable Long courseId,
-            @AuthenticationPrincipal org.springframework.security.core.userdetails.UserDetails principal) {
-
-        Long userName = Long.parseLong(principal.getUsername());
-        var owner = userRepo.findByUserName(userName)
-                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.UNAUTHORIZED));
-
-        var course = repo.findById(courseId)
-                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.NOT_FOUND));
-        if (!course.getOwner().getId().equals(owner.getId()))
-            throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN);
-
-        return enrollmentRepo.findAllByCourse_Id(courseId).stream()
-                .map(e -> new com.example.server.course.EnrollmentDto.CourseStudentDto(
-                        e.getStudent().getId(),
-                        e.getStudent().getUserName(),
-                        e.getStudent().getName(),
-                        e.getStudent().getSurname()
-                ))
-                .toList();
+    @GetMapping("/my")
+    public List<CourseDto> myCoursesAlt(@AuthenticationPrincipal UserDetails principal) {
+        Long userName = parsePrincipal(principal);
+        return repo.findAllByOwner_UserName(userName)
+                .stream().map(CourseDto::from).toList();
     }
 
-    @PostMapping("/{courseId}/students")
-    @ResponseStatus(org.springframework.http.HttpStatus.NO_CONTENT)
-    public void addStudents(@PathVariable Long courseId,
-                            @RequestBody com.example.server.course.EnrollmentDto.AddStudentsRequest req,
-                            @AuthenticationPrincipal org.springframework.security.core.userdetails.UserDetails principal) {
-
-        Long userName = Long.parseLong(principal.getUsername());
-        var owner = userRepo.findByUserName(userName)
-                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.UNAUTHORIZED));
-
-        var course = repo.findById(courseId)
-                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.NOT_FOUND));
-        if (!course.getOwner().getId().equals(owner.getId()))
-            throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN);
-
-        if (req == null || req.userNames() == null) return;
-
-        for (Long un : req.userNames()) {
-            var student = userRepo.findByUserName(un)
-                    .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST, "User not found: " + un));
-            if (enrollmentRepo.existsByCourse_IdAndStudent_Id(courseId, student.getId())) continue;
-
-            var en = new CourseEnrollment();
-            en.setCourse(course);
-            en.setStudent(student);
-            enrollmentRepo.save(en);
+    private Long parsePrincipal(UserDetails principal) {
+        try {
+            return Long.parseLong(principal.getUsername());
+        } catch (NumberFormatException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid principal");
         }
-    }
-
-    @DeleteMapping("/{courseId}/students/{userName}")
-    @ResponseStatus(org.springframework.http.HttpStatus.NO_CONTENT)
-    public void removeStudent(@PathVariable Long courseId,
-                              @PathVariable Long userName,
-                              @AuthenticationPrincipal org.springframework.security.core.userdetails.UserDetails principal) {
-
-        Long ownerUN = Long.parseLong(principal.getUsername());
-        var owner = userRepo.findByUserName(ownerUN)
-                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.UNAUTHORIZED));
-
-        var course = repo.findById(courseId)
-                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.NOT_FOUND));
-        if (!course.getOwner().getId().equals(owner.getId()))
-            throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN);
-
-        var student = userRepo.findByUserName(userName)
-                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.NOT_FOUND, "User not found"));
-
-        enrollmentRepo.deleteByCourse_IdAndStudent_Id(courseId, student.getId());
     }
 }

@@ -30,4 +30,11 @@ public class UserController {
         URI location = URI.create("/users/" + saved.getId());
         return ResponseEntity.created(location).body(UserDto.from(saved));
     }
+
+    @GetMapping("/students")
+    public List<UserDto> allStudents() {
+        return repo.findAllByUserIsStudentTrue().stream()
+                .map(UserDto::from)
+                .toList();
+    }
 }
