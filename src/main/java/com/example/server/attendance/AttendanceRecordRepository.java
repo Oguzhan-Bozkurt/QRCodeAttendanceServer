@@ -21,6 +21,8 @@ public interface AttendanceRecordRepository extends JpaRepository<AttendanceReco
 
     List<AttendanceRecord> findAllBySessionIdInAndStudent_Id(List<Long> sessionIds, Long studentId);
 
+    void deleteAllBySessionIdIn(List<Long> sessionIds);
+
     @Query("""
        select new com.example.server.attendance.MyAttendanceDto(
            s.id,

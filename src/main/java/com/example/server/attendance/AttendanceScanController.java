@@ -35,7 +35,6 @@ public class AttendanceScanController {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Secret boş olamaz");
         }
 
-        // 1) Giriş yapan kullanıcı
         Long userName;
         try {
             userName = Long.parseLong(principal.getUsername());
@@ -45,28 +44,18 @@ public class AttendanceScanController {
         User student = userRepo.findByUserName(userName)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found"));
 
-        // (İstersen) yalnızca öğrenciler tarayabilsin
-        // if (!Boolean.TRUE.equals(student.getUserIsStudent())) {
-        //     throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Sadece öğrenciler QR okutabilir");
-        // }
-
-        // 2) Aktif ve secret eşleşen oturumu bul
         AttendanceSession s = sessionRepo.findBySecretAndIsActiveTrue(req.secret())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Geçersiz veya kapalı oturum"));
 
-        // 3) Süre kontrolü
         if (Instant.now().isAfter(s.getExpiresAt())) {
-            // s.setActive(false); sessionRepo.save(s); // istersen burada kapat
             throw new ResponseStatusException(HttpStatus.GONE, "Oturum süresi doldu");
         }
 
-        // 4) İdempotent: varsa aynı kaydı geri döndür
         var existing = recordRepo.findBySessionIdAndStudent_Id(s.getId(), student.getId());
         if (existing.isPresent()) {
             return AttendanceRecordDto.from(existing.get());
         }
 
-        // 5) Kayıt oluştur
         AttendanceRecord r = new AttendanceRecord();
         r.setSessionId(s.getId());
         r.setStudent(student);
