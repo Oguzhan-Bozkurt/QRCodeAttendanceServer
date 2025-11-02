@@ -39,10 +39,10 @@ public class AttendanceController {
         this.recordRepo = recordRepo;
     }
 
-    public record StartRequest(Integer minutes) {}
+    public record StartRequest(Integer minutes, String description) {}
     public record CheckinRequest(String secret) {}
     public record CheckinResponse(Long sessionId, Instant checkedAt, String status) {}
-    public record ActiveSummaryDto(Long sessionId, Instant expiresAt, long count, boolean active) {}
+    public record ActiveSummaryDto(Long sessionId, Instant expiresAt, long count, boolean active, String description) {}
 
     private Long principalUserName(UserDetails principal) {
         try {
@@ -84,7 +84,7 @@ public class AttendanceController {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No active session"));
 
         long cnt = recordRepo.countBySessionId(s.getId());
-        return new ActiveSummaryDto(s.getId(), s.getExpiresAt(), cnt, s.isActive());
+        return new ActiveSummaryDto(s.getId(), s.getExpiresAt(), cnt, s.isActive(), s.getDescription());
     }
 
     @PostMapping("/start")
@@ -103,12 +103,21 @@ public class AttendanceController {
         if (mins < 1) mins = 1;
         if (mins > 180) mins = 180;
 
+        String desc = (req != null && req.description() != null) ? req.description().trim() : "";
+        if (desc.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Description is required");
+        }
+        if (desc.length() > 50) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Description too long (max 50)");
+        }
+
         AttendanceSession s = new AttendanceSession();
         s.setCourse(course);
         s.setOwner(owner);
         s.setSecret(generateSecret(16));
         s.setExpiresAt(Instant.now().plus(Duration.ofMinutes(mins)));
         s.setActive(true);
+        s.setDescription(desc);
 
         return AttendanceSessionDto.from(sessionRepo.save(s));
     }
@@ -235,7 +244,8 @@ public class AttendanceController {
             Instant createdAt,
             Instant expiresAt,
             boolean active,
-            long count
+            long count,
+            String description
     ) {
         public static SessionWithCountDto of(AttendanceSession s, long count) {
             return new SessionWithCountDto(
@@ -243,7 +253,8 @@ public class AttendanceController {
                     s.getCreatedAt(),
                     s.getExpiresAt(),
                     s.isActive(),
-                    count
+                    count,
+                    s.getDescription()
             );
         }
     }

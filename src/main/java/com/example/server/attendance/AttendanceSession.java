@@ -25,6 +25,9 @@ public class AttendanceSession {
     @Column(nullable = false)
     private String secret;
 
+    @Column(nullable = false)
+    private String description;
+
     @Column(name = "expires_at", nullable = false)
     private Instant expiresAt;
 
@@ -53,4 +56,7 @@ public class AttendanceSession {
 
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
+
+    public String getDescription() { return description; }
+    public void setDescription(String description) { this.description = description; }
 }

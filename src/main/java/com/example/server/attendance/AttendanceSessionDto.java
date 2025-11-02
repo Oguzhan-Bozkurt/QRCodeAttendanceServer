@@ -8,7 +8,8 @@ public record AttendanceSessionDto(
         String secret,
         Instant expiresAt,
         boolean active,
-        Instant createdAt
+        Instant createdAt,
+        String description
 ) {
     public static AttendanceSessionDto from(AttendanceSession s) {
         return new AttendanceSessionDto(
@@ -17,7 +18,8 @@ public record AttendanceSessionDto(
                 s.getSecret(),
                 s.getExpiresAt(),
                 s.isActive(),
-                s.getCreatedAt()
+                s.getCreatedAt(),
+                s.getDescription()
         );
     }
 }

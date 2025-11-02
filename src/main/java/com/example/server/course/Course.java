@@ -33,11 +33,14 @@ public class Course {
     private Set<User> students = new HashSet<>();
 
     public Long getId() { return id; }
+
     public String getCourseName() { return courseName; }
     public void setCourseName(String courseName) { this.courseName = courseName; }
+
     public String getCourseCode() { return courseCode; }
     public void setCourseCode(String courseCode) { this.courseCode = courseCode; }
-    public com.example.server.user.User getOwner() { return owner; }
+
+    public User getOwner() { return owner; }
     public void setOwner(User owner) { this.owner = owner; }
 
     public Set<User> getStudents() { return students; }
