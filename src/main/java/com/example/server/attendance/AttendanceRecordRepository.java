@@ -29,7 +29,8 @@ public interface AttendanceRecordRepository extends JpaRepository<AttendanceReco
            c.id,
            c.courseName,
            c.courseCode,
-           r.checkedAt
+           r.checkedAt,
+           s.description
        )
        from AttendanceRecord r
        join AttendanceSession s on s.id = r.sessionId

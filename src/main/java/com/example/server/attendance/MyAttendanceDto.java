@@ -7,5 +7,6 @@ public record MyAttendanceDto(
         Long courseId,
         String courseName,
         String courseCode,
-        Instant checkedAt
+        Instant checkedAt,
+        String description
 ) {}
