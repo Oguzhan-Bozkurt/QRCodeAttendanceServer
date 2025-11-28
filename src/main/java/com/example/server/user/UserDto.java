@@ -6,8 +6,7 @@ public record UserDto(
         String name,
         String surname,
         Boolean userIsStudent,
-        String title
-) {
+        String title) {
     public static UserDto from(User u) {
         return new UserDto(
                 u.getId(), u.getUserName(), u.getName(),

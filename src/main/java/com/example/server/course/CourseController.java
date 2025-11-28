@@ -44,6 +44,13 @@ public class CourseController {
                 .stream().map(CourseDto::from).toList();
     }
 
+    @GetMapping("/{id}")
+    public CourseDetailDto getCourse(@PathVariable Long id) {
+        Course c = repo.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+        return new CourseDetailDto(c);
+    }
+
     @GetMapping("/my")
     public List<CourseDto> myCoursesAlt(@AuthenticationPrincipal UserDetails principal) {
         Long userName = parsePrincipal(principal);
@@ -107,6 +114,26 @@ public class CourseController {
         }
         repo.deleteAllCourseStudents(id);
         repo.delete(course);
+    }
+
+    @PutMapping("/{id}")
+    public CourseDetailDto update(
+            @PathVariable Long id,
+            @RequestBody CourseCreateRequest req
+    ) {
+        Course c = repo.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Course not found"));
+
+        c.setCourseName(req.getCourseName());
+        c.setCourseCode(req.getCourseCode());
+
+        List<Long> studentIds = req.getStudentIds();
+        Set<User> newStudents = new HashSet<>(userRepo.findAllById(studentIds));
+        c.setStudents(newStudents);
+
+        repo.save(c);
+
+        return new CourseDetailDto(c);
     }
 
     private Long parsePrincipal(UserDetails principal) {
