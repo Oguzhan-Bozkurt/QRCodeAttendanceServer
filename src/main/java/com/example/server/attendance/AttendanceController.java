@@ -7,6 +7,8 @@ import com.example.server.user.UserRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -19,6 +21,8 @@ import org.springframework.web.bind.annotation.RestController;
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
+
+import jakarta.transaction.Transactional;
 
 @RestController
 @RequestMapping("/courses/{courseId}/attendance")
@@ -43,6 +47,8 @@ public class AttendanceController {
     public record CheckinRequest(String secret) {}
     public record CheckinResponse(Long sessionId, Instant checkedAt, String status) {}
     public record ActiveSummaryDto(Long sessionId, Instant expiresAt, long count, boolean active, String description) {}
+    public record ManualAddRequest(Long studentId) {}
+    public record UpdateSessionRequest(String description) {}
 
     private Long principalUserName(UserDetails principal) {
         try {
@@ -381,5 +387,171 @@ public class AttendanceController {
                     );
                 })
                 .toList();
+    }
+
+    @PostMapping("/{sessionId}/manual-add")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void manualAddStudent(
+            @PathVariable Long courseId,
+            @PathVariable Long sessionId,
+            @RequestBody ManualAddRequest req,
+            @AuthenticationPrincipal org.springframework.security.core.userdetails.UserDetails principal
+    ) {
+        if (req == null || req.studentId() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "studentId is required");
+        }
+
+        Long userName;
+        try {
+            userName = Long.parseLong(principal.getUsername());
+        } catch (NumberFormatException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid principal");
+        }
+
+        User owner = userRepo.findByUserName(userName)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found"));
+
+        Course course = courseRepo.findById(courseId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Course not found"));
+
+        if (!course.getOwner().getId().equals(owner.getId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only owner can edit attendance");
+        }
+
+        AttendanceSession session = sessionRepo.findById(sessionId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Session not found"));
+
+        if (!session.getCourse().getId().equals(courseId)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Course mismatch");
+        }
+
+        User student = userRepo.findById(req.studentId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Student not found"));
+
+        if (!Boolean.TRUE.equals(student.isUserIsStudent())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "User is not a student");
+        }
+
+        boolean enrolled = course.getStudents().stream()
+                .anyMatch(u -> u.getId().equals(student.getId()));
+        if (!enrolled) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Student is not enrolled in this course");
+        }
+
+        if (recordRepo.existsBySessionIdAndStudent_Id(session.getId(), student.getId())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Student already checked-in");
+        }
+
+        AttendanceRecord rec = new AttendanceRecord();
+        rec.setSessionId(session.getId());
+        rec.setStudent(student);
+        rec.setCheckedAt(Instant.now());
+        recordRepo.save(rec);
+    }
+
+    @PutMapping("/{sessionId}")
+    public AttendanceSessionDto updateSession(@PathVariable Long courseId,
+                                              @PathVariable Long sessionId,
+                                              @AuthenticationPrincipal UserDetails principal,
+                                              @RequestBody UpdateSessionRequest req) {
+        Long userName;
+        try { userName = Long.parseLong(principal.getUsername()); }
+        catch (NumberFormatException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid principal");
+        }
+
+        User owner = userRepo.findByUserName(userName)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found"));
+
+        Course course = courseRepo.findById(courseId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Course not found"));
+
+        if (!course.getOwner().getId().equals(owner.getId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only owner can update session");
+        }
+
+        AttendanceSession s = sessionRepo.findById(sessionId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Session not found"));
+
+        if (!s.getCourse().getId().equals(courseId)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Course mismatch");
+        }
+
+        if (req == null || req.description() == null || req.description().trim().isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Description is required");
+        }
+        String desc = req.description().trim();
+        if (desc.length() > 50) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Description too long (max 50)");
+        }
+
+        s.setDescription(desc);
+        s = sessionRepo.save(s);
+
+        return AttendanceSessionDto.from(s);
+    }
+
+    @DeleteMapping("/{sessionId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @Transactional
+    public void deleteSession(@PathVariable Long courseId,
+                              @PathVariable Long sessionId,
+                              @AuthenticationPrincipal UserDetails principal) {
+
+        Long userName;
+        try {
+            userName = Long.parseLong(principal.getUsername());
+        } catch (NumberFormatException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid principal");
+        }
+
+        User owner = userRepo.findByUserName(userName)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found"));
+
+        Course course = courseRepo.findById(courseId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Course not found"));
+
+        if (!course.getOwner().getId().equals(owner.getId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only owner can delete session");
+        }
+
+        AttendanceSession session = sessionRepo.findById(sessionId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Session not found"));
+
+        if (!session.getCourse().getId().equals(courseId)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Course mismatch");
+        }
+
+        recordRepo.deleteAllBySessionIdIn(java.util.List.of(sessionId));
+        sessionRepo.delete(session);
+    }
+
+    @DeleteMapping("/{sessionId}/records/{studentId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void removeRecord(@PathVariable Long courseId,
+                             @PathVariable Long sessionId,
+                             @PathVariable Long studentId,
+                             @AuthenticationPrincipal UserDetails principal) {
+        Long userName;
+        try { userName = Long.parseLong(principal.getUsername()); }
+        catch (NumberFormatException e) { throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid principal"); }
+
+        var owner = userRepo.findByUserName(userName)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found"));
+
+        var course = courseRepo.findById(courseId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Course not found"));
+        if (!course.getOwner().getId().equals(owner.getId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only owner can modify attendance");
+        }
+
+        var session = sessionRepo.findById(sessionId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Session not found"));
+        if (!session.getCourse().getId().equals(courseId)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Course mismatch");
+        }
+
+        recordRepo.findBySessionIdAndStudent_Id(sessionId, studentId)
+                .ifPresent(recordRepo::delete);
     }
 }
