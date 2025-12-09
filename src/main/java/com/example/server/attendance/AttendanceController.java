@@ -21,13 +21,15 @@ import org.springframework.web.bind.annotation.RestController;
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.regex.Pattern;
+import java.util.regex.Matcher;
 
 import jakarta.transaction.Transactional;
 
 @RestController
 @RequestMapping("/courses/{courseId}/attendance")
 public class AttendanceController {
-
+    private static final Pattern WEEK_PATTERN = Pattern.compile("(\\d+)\\s*\\.?\\s*Hafta", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
     private final CourseRepository courseRepo;
     private final UserRepository userRepo;
     private final AttendanceSessionRepository sessionRepo;
@@ -73,6 +75,24 @@ public class AttendanceController {
         return c;
     }
 
+    private String suggestNextDescription(Long courseId) {
+        var lastOpt = sessionRepo.findFirstByCourse_IdOrderByCreatedAtDesc(courseId);
+        if (lastOpt.isPresent()) {
+            String prev = lastOpt.get().getDescription();
+            if (prev != null) {
+                Matcher m = WEEK_PATTERN.matcher(prev);
+                int last = 0;
+                while (m.find()) {
+                    try { last = Integer.parseInt(m.group(1)); } catch (NumberFormatException ignore) {}
+                }
+                if (last > 0) return (last + 1) + ". Hafta";
+            }
+            long cnt = sessionRepo.countByCourse_Id(courseId);
+            if (cnt >= 1) return (cnt + 1) + ". Hafta";
+        }
+        return "1. Hafta";
+    }
+
     @GetMapping("/active/summary")
     public ActiveSummaryDto activeSummary(@PathVariable Long courseId,
                                           @AuthenticationPrincipal UserDetails principal) {
@@ -111,7 +131,7 @@ public class AttendanceController {
 
         String desc = (req != null && req.description() != null) ? req.description().trim() : "";
         if (desc.isBlank()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Description is required");
+            desc = suggestNextDescription(courseId);
         }
         if (desc.length() > 50) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Description too long (max 50)");
@@ -165,6 +185,11 @@ public class AttendanceController {
 
         var active = sessionRepo.findFirstByCourse_IdAndIsActiveTrue(courseId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "No active session"));
+
+        Instant now = Instant.now();
+        if (active.getExpiresAt() == null || now.isBefore(active.getExpiresAt())) {
+            active.setExpiresAt(now);
+        }
 
         active.setActive(false);
         sessionRepo.save(active);
@@ -553,5 +578,39 @@ public class AttendanceController {
 
         recordRepo.findBySessionIdAndStudent_Id(sessionId, studentId)
                 .ifPresent(recordRepo::delete);
+    }
+
+    @GetMapping(value = "/export.pdf", produces = "application/pdf")
+    public org.springframework.http.ResponseEntity<byte[]> exportCoursePdf(
+            @PathVariable Long courseId,
+            @AuthenticationPrincipal org.springframework.security.core.userdetails.UserDetails principal
+    ) {
+        Long userName = principalUserName(principal);
+        var owner = userRepo.findByUserName(userName)
+                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.UNAUTHORIZED, "User not found"));
+
+        var course = courseRepo.findById(courseId)
+                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.NOT_FOUND, "Course not found"));
+
+        if (!course.getOwner().getId().equals(owner.getId())) {
+            throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN, "Only owner can export");
+        }
+
+        var sessions = sessionRepo.findAllByCourse_IdOrderByCreatedAtDesc(courseId);
+
+        try {
+            byte[] pdf = PdfExporter.exportCourse(course,
+                    sessions,
+                    sid -> recordRepo.findAllBySessionIdOrderByCheckedAtAsc(sid));
+
+            String fileName = ("Yoklama_" + course.getCourseCode() + ".pdf").replaceAll("\\s+", "_");
+            return org.springframework.http.ResponseEntity.ok()
+                    .header("Content-Disposition", "attachment; filename=\"" + fileName + "\"")
+                    .contentType(org.springframework.http.MediaType.APPLICATION_PDF)
+                    .body(pdf);
+        } catch (Exception e) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR, "PDF generation failed");
+        }
     }
 }

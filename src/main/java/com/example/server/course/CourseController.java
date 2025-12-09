@@ -136,6 +136,30 @@ public class CourseController {
         return new CourseDetailDto(c);
     }
 
+    @GetMapping("/{id}/students")
+    public java.util.List<com.example.server.user.UserDto> courseStudents(
+            @PathVariable Long id,
+            @AuthenticationPrincipal org.springframework.security.core.userdetails.UserDetails principal
+    ) {
+        Long userName;
+        try { userName = Long.parseLong(principal.getUsername()); }
+        catch (NumberFormatException e) { throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST, "Invalid principal"); }
+
+        var owner = userRepo.findByUserName(userName)
+                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.UNAUTHORIZED, "User not found"));
+
+        var course = repo.findById(id)
+                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.NOT_FOUND, "Course not found"));
+
+        if (!course.getOwner().getId().equals(owner.getId())) {
+            throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN, "Only owner can view students");
+        }
+
+        return course.getStudents().stream()
+                .map(com.example.server.user.UserDto::from)
+                .toList();
+    }
+
     private Long parsePrincipal(UserDetails principal) {
         try {
             return Long.parseLong(principal.getUsername());
