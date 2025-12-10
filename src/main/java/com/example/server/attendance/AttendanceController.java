@@ -579,38 +579,4 @@ public class AttendanceController {
         recordRepo.findBySessionIdAndStudent_Id(sessionId, studentId)
                 .ifPresent(recordRepo::delete);
     }
-
-    @GetMapping(value = "/export.pdf", produces = "application/pdf")
-    public org.springframework.http.ResponseEntity<byte[]> exportCoursePdf(
-            @PathVariable Long courseId,
-            @AuthenticationPrincipal org.springframework.security.core.userdetails.UserDetails principal
-    ) {
-        Long userName = principalUserName(principal);
-        var owner = userRepo.findByUserName(userName)
-                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.UNAUTHORIZED, "User not found"));
-
-        var course = courseRepo.findById(courseId)
-                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.NOT_FOUND, "Course not found"));
-
-        if (!course.getOwner().getId().equals(owner.getId())) {
-            throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.FORBIDDEN, "Only owner can export");
-        }
-
-        var sessions = sessionRepo.findAllByCourse_IdOrderByCreatedAtDesc(courseId);
-
-        try {
-            byte[] pdf = PdfExporter.exportCourse(course,
-                    sessions,
-                    sid -> recordRepo.findAllBySessionIdOrderByCheckedAtAsc(sid));
-
-            String fileName = ("Yoklama_" + course.getCourseCode() + ".pdf").replaceAll("\\s+", "_");
-            return org.springframework.http.ResponseEntity.ok()
-                    .header("Content-Disposition", "attachment; filename=\"" + fileName + "\"")
-                    .contentType(org.springframework.http.MediaType.APPLICATION_PDF)
-                    .body(pdf);
-        } catch (Exception e) {
-            throw new org.springframework.web.server.ResponseStatusException(
-                    org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR, "PDF generation failed");
-        }
-    }
 }
