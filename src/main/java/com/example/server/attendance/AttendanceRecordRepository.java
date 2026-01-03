@@ -40,4 +40,10 @@ public interface AttendanceRecordRepository extends JpaRepository<AttendanceReco
        order by r.checkedAt desc
        """)
     List<MyAttendanceDto> findMyAttendance(@Param("studentId") Long studentId);
+
+    @Query("""
+            select count(ar) from AttendanceRecord ar where ar.student.id = :studentId and ar.sessionId in
+            (select s.id from AttendanceSession s where s.course.id = :courseId)
+            """)
+    long countAttendedSessionsByStudentAndCourse(@Param("studentId") Long studentId, @Param("courseId") Long courseId);
 }
