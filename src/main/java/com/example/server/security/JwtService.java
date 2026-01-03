@@ -1,8 +1,12 @@
 package com.example.server.security;
 
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Service;
@@ -16,6 +20,8 @@ import java.util.Date;
 @Service
 public class JwtService {
 
+    private static final Logger log = LoggerFactory.getLogger(JwtService.class);
+
     @Value("${app.jwt.secret}")
     private String secret;
 
@@ -26,6 +32,10 @@ public class JwtService {
 
     @PostConstruct
     void init() {
+
+        if (secret.getBytes(StandardCharsets.UTF_8).length < 32) {
+            log.warn("UYARI: JWT gizli anahtarı 256 bitten daha kısa. Bu, üretim ortamı için GÜVENLİ DEĞİLDİR.");
+        }
         this.key = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
     }
 
@@ -39,18 +49,26 @@ public class JwtService {
                 .compact();
     }
 
-    public String extractUsername(String token) {
+    private Claims extractAllClaims(String token) {
         return Jwts.parser()
                 .verifyWith(key)
                 .build()
                 .parseSignedClaims(token)
-                .getPayload()
-                .getSubject();
+                .getPayload();
+    }
+
+    public String extractUsername(String token) {
+        return extractAllClaims(token).getSubject();
     }
 
     public boolean isTokenValid(String token, UserDetails user) {
-        var claims = Jwts.parser().verifyWith(key).build().parseSignedClaims(token).getPayload();
-        boolean notExpired = claims.getExpiration().after(new Date());
-        return notExpired && claims.getSubject().equals(user.getUsername());
+        try {
+            Claims claims = extractAllClaims(token);
+            String username = claims.getSubject();
+            return username.equals(user.getUsername());
+        } catch (JwtException e) {
+            log.debug("Geçersiz JWT token: {}", e.getMessage());
+            return false;
+        }
     }
 }

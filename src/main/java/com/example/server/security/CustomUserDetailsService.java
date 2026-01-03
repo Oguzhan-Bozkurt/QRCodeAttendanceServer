@@ -2,6 +2,7 @@ package com.example.server.security;
 
 import com.example.server.user.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.core.userdetails.User;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
@@ -11,25 +12,25 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class CustomUserDetailsService implements UserDetailsService {
 
-    private final UserRepository repo;
+    private final UserRepository userRepo;
 
     @Override
     public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
-        Long userNameLong;
+        long userId;
         try {
-            userNameLong = Long.valueOf(username);
+            userId = Long.parseLong(username);
         } catch (NumberFormatException e) {
-            throw new UsernameNotFoundException("Kullanıcı adı sayısal olmalı");
+            throw new UsernameNotFoundException("Kullanıcı adı (ID) sayısal olmalıdır: " + username, e);
         }
 
-        var u = repo.findByUserName(userNameLong)
-                .orElseThrow(() -> new UsernameNotFoundException("Kullanıcı bulunamadı"));
+        com.example.server.user.User appUser = userRepo.findByUserName(userId)
+                .orElseThrow(() -> new UsernameNotFoundException("Kullanıcı bulunamadı: " + userId));
 
-        // DİKKAT: Burada FQCN kullanıyoruz, import etmiyoruz.
-        return org.springframework.security.core.userdetails.User
-                .withUsername(u.getUserName().toString())
-                .password(u.getPassword())
-                .authorities("USER")
+        String role = appUser.isUserIsStudent() ? "ROLE_STUDENT" : "ROLE_ACADEMIC";
+
+        return User.withUsername(appUser.getUserName().toString())
+                .password(appUser.getPassword())
+                .authorities(role)
                 .build();
     }
 }

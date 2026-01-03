@@ -11,6 +11,7 @@ import jakarta.transaction.Transactional;
 
 public interface CourseRepository extends JpaRepository<Course, Long> {
     List<Course> findAllByOwner_UserName(Long userName);
+    List<Course> findAllByStudents_Id(Long studentId);
 
     @Modifying
     @Transactional
